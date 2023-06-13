@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Callable, Generic, Hashable, Literal, TypeVar, Union
+from typing import Callable, Generic, Hashable, Literal, Protocol, TypeVar, Union
 
 if sys.version_info < (3, 10):
     from typing_extensions import Concatenate, ParamSpec
@@ -15,9 +15,12 @@ if sys.version_info < (3, 11):
 else:
     from typing import Self
 
-from dorn.spikes import Spike
 
-TSpike = TypeVar("TSpike", bound=Spike)
+class HasTime(Protocol):
+    time: float
+
+
+TSpike = TypeVar("TSpike", bound=HasTime)
 
 
 class Network(ABC, Generic[TSpike]):
@@ -42,30 +45,30 @@ class Network(ABC, Generic[TSpike]):
                 self._emit_event("post_time_evolution", remaining_time)
                 return
 
-            interspike_interval = next_spike.time - self.time
+            interval = next_spike.time - self.time
+            self._emit_event("pre_time_evolution", interval)
+            self._evolve_in_time(interval)
+            self._emit_event("post_time_evolution", interval)
 
-            self._emit_event("pre_time_evolution", interspike_interval)
-            self._evolve_in_time(interspike_interval)
-            self._emit_event("post_time_evolution", interspike_interval)
-
-            self._emit_event("pre_spike", next_spike)
-            self._process_spike(next_spike)
-            self._emit_event("post_spike", next_spike)
+            if self._is_valid_spike(next_spike):
+                self._emit_event("pre_spike", next_spike)
+                self._process_spike(next_spike)
+                self._emit_event("post_spike", next_spike)
 
     def simulate_next_spike(self) -> None:
         next_spike = self._get_next_spike_with_cache(clear_cache=True)
-        interspike_interval = next_spike.time - self.time
 
-        self._emit_event("pre_time_evolution", interspike_interval)
-        self._evolve_in_time(interspike_interval)
-        self._emit_event("post_time_evolution", interspike_interval)
+        interval = next_spike.time - self.time
+        self._emit_event("pre_time_evolution", interval)
+        self._evolve_in_time(interval)
+        self._emit_event("post_time_evolution", interval)
 
-        self._emit_event("pre_spike", next_spike)
-        self._process_spike(next_spike)
-        self._emit_event("post_spike", next_spike)
-
-    def clear_cache(self) -> None:
-        self._cached_next_spike = None
+        if self._is_valid_spike(next_spike):
+            self._emit_event("pre_spike", next_spike)
+            self._process_spike(next_spike)
+            self._emit_event("post_spike", next_spike)
+        else:
+            self.simulate_next_spike()
 
     def _get_next_spike_with_cache(self, *, clear_cache=False) -> TSpike:
         if self._cached_next_spike is not None:
@@ -78,15 +81,19 @@ class Network(ABC, Generic[TSpike]):
 
         return self._get_next_spike()
 
+    def clear_cache(self) -> None:
+        self._cached_next_spike = None
+
     @abstractmethod
     def _get_next_spike(self) -> TSpike:
         raise NotImplementedError
 
-    @abstractmethod
     def _evolve_in_time(self, duration: float) -> None:
         self.time += duration
 
-    @abstractmethod
+    def _is_valid_spike(self, spike: TSpike) -> bool:
+        return True
+
     def _process_spike(self, spike: TSpike) -> None:
         self.spike_count += 1
 

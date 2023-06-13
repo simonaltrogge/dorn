@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 import numpy.typing as npt
+from _enums import HiddenValueEnum, OrderedEnum
 
 from dorn import poissonprocess
 from dorn._typing import Seed, SequenceLikeFloat
-from dorn.spikes import NextSpike, SpikeType
 
 
 class NeuronPopulation:
@@ -28,22 +30,18 @@ class NeuronPopulation:
     def draw_next_spike(self, *, seed: Seed) -> NextSpike:
         rng = np.random.default_rng(seed)
 
-        interspike_interval_spontaneous = self._draw_spontaneous_interspike_interval(
-            seed=rng,
-        )
-        interspike_interval_evoked = self._draw_evoked_interspike_interval(
-            seed=rng,
-        )
+        interval_spontaneous = self._draw_spontaneous_interval(seed=rng)
+        interval_evoked = self._draw_evoked_interval(seed=rng)
 
-        if interspike_interval_spontaneous < interspike_interval_evoked:
+        if interval_spontaneous < interval_evoked:
             spike_type = SpikeType.SPONTANEOUS
-            interspike_interval = interspike_interval_spontaneous
+            interval = interval_spontaneous
             spiking_probability_by_neuron = self.rates_spontaneous / np.sum(
                 self.rates_spontaneous
             )
         else:
             spike_type = SpikeType.EVOKED
-            interspike_interval = interspike_interval_evoked
+            interval = interval_evoked
             spiking_probability_by_neuron = self.rates_evoked / np.sum(
                 self.rates_evoked
             )
@@ -52,15 +50,15 @@ class NeuronPopulation:
             spiking_probability_by_neuron, seed=rng
         )
 
-        return NextSpike(interspike_interval, spiking_neuron, spike_type)
+        return NextSpike(interval, spiking_neuron, spike_type)
 
-    def _draw_spontaneous_interspike_interval(self, *, seed: Seed) -> float:
+    def _draw_spontaneous_interval(self, *, seed: Seed) -> float:
         return poissonprocess.homogeneous.draw_interarrival_time(
             rate=np.sum(self.rates_spontaneous),  # type: ignore (see https://github.com/numpy/numpy/issues/23663)
             seed=seed,
         )
 
-    def _draw_evoked_interspike_interval(self, *, seed: Seed) -> float:
+    def _draw_evoked_interval(self, *, seed: Seed) -> float:
         return poissonprocess.exponentially_decaying.draw_interarrival_time(
             rate=np.sum(self.rates_evoked),  # type: ignore (see https://github.com/numpy/numpy/issues/23663)
             time_constant=self.time_constant,
@@ -91,3 +89,26 @@ class NeuronPopulation:
 
     def __len__(self) -> int:
         return self.size
+
+
+class SpikeType(OrderedEnum, HiddenValueEnum):
+    SPONTANEOUS = "spontaneous"
+    EVOKED = "evoked"
+
+
+class NextSpike(NamedTuple):
+    interval: float
+    neuron: int
+    type: SpikeType
+
+    def interval_to_time(self, current_time):
+        return Spike(current_time + self.interval, self.neuron, self.type)
+
+
+class Spike(NamedTuple):
+    time: float
+    neuron: int
+    type: SpikeType
+
+    def time_to_interval(self, current_time):
+        return NextSpike(self.time - current_time, self.neuron, self.type)
